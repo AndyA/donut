@@ -1,0 +1,14 @@
+{
+  "name": "donut",
+  "version": "0.0.1",
+  "description": "Simple express style middleware despatcher",
+  "main": "index.js",
+  "bin": {
+    "donut": "mule.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Andy Armstrong <andy@hexten.net>",
+  "license": "ISC"
+}
