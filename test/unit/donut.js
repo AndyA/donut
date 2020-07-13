@@ -7,7 +7,7 @@ const donut = require("../..");
 
 const addOutcome = app =>
   app.use(
-    (req, res, next) => res.resolve({ req, res }),
+    (req, res) => res.resolve({ req, res }),
     (err, req, res, next) => res.resolve({ err, req, res })
   );
 
