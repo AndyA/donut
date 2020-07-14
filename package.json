@@ -3,9 +3,6 @@
   "version": "0.0.1",
   "description": "Simple express style middleware despatcher",
   "main": "index.js",
-  "bin": {
-    "donut": "mule.js"
-  },
   "scripts": {
     "test": "tap",
     "tdd": "tap -w"
