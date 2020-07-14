@@ -11,25 +11,7 @@ const lookupMap = { type: NAME_TO_QTYPE, class: NAME_TO_QCLASS };
 const { A } = NAME_TO_QTYPE;
 const { IN } = NAME_TO_QCLASS;
 
-async function lookup(question, server, timeout) {
-  if (_.isArray(server))
-    return Promise.any(server.map(s => lookup(question, s)));
-
-  return new Promise((resolve, reject) => {
-    console.log(`  proxying via ${server.address}`, question);
-
-    const answer = [];
-
-    dns
-      .Request({ question, server, timeout })
-      .on("message", (err, msg) => {
-        if (err) reject(err);
-        answer.push(...msg.answer);
-      })
-      .on("end", () => resolve(answer))
-      .send();
-  });
-}
+const reSuffix = suff => new RegExp(`${_.escapeRegExp(suff)}$`);
 
 const normRec = rec =>
   _.mapValues(rec, (val, key) =>
@@ -70,15 +52,71 @@ const makeMatcher = pred => {
 };
 
 class DonutDNS extends donut.Donut {
+  constructor(opt) {
+    super(Object.assign({ upstream: [], timeout: 10000 }, opt || []));
+  }
+
   hook(pred, ...middleware) {
     return super.hook(makeMatcher(pred), ...middleware);
   }
+
+  async lookup(question, server, timeout) {
+    if (_.isArray(server))
+      return Promise.any(server.map(s => lookup(question, s)));
+
+    return new Promise((resolve, reject) => {
+      const answer = [];
+      dns
+        .Request({ question, server, timeout })
+        .on("message", (err, msg) => {
+          if (err) reject(err);
+          answer.push(...msg.answer);
+        })
+        .on("end", () => resolve(answer))
+        .send();
+    });
+  }
+
+  async proxyRequest(req, res) {
+    const { upstream, timeout } = this.opt;
+    const answers = _.flatten(
+      await Promise.map(req.question, q => this.lookup(q, upstream, timeout))
+    );
+    res.answer.push(...answers);
+  }
+
+  alias(fake, real) {
+    const fm = reSuffix(fake);
+    const rm = reSuffix(real);
+
+    return this.hook({ class: "in", name: fm }, async (req, res) => {
+      // For some reason a for loop that just changes the name causes
+      // ;; Question section mismatch: got plinth.pike/A/IN
+      req.question = req.question.map(q => ({
+        ...q,
+        name: q.name.replace(fm, real)
+      }));
+
+      await this.proxyRequest(req, res);
+
+      res.answer = res.answer.map(a => ({
+        ...a,
+        name: a.name.replace(rm, fake)
+      }));
+
+      res.send();
+    });
+  }
 }
 
-const app = new DonutDNS();
+const { upstream, timeout, port } = config;
+const app = new DonutDNS({ upstream, timeout, port });
+
+app.alias(".pike.bbc.co.uk", ".pike");
+app.alias(".local.bbc.co.uk", ".pike");
 
 app.hook(
-  { type: "a", class: "in", name: /(?:(\w+)\.)?arse\.co\.uk$/ },
+  { type: "a", class: "in", name: ["arse.co.uk", /\.arse\.co\.uk$/] },
   (req, res, next) => {
     res.answer = [
       {
@@ -93,25 +131,10 @@ app.hook(
   }
 );
 
-app.hook({ class: "in", type: "a" }, (req, res, next) => {
-  req.question = [];
-  next();
-});
-
-app.use(async (req, res, next) => {
-  console.log("question", req.question);
-
-  const { upstream, timeout } = config;
-
-  const answers = _.flatten(
-    await Promise.map(req.question, q => lookup(q, upstream, timeout))
-  );
-
-  res.answer.push(...answers);
+app.use(async (req, res) => {
+  await proxyRequest(req, res);
   res.send();
 });
-
-//console.log(makeRec({ name: "hexten.net", class: "in", type: "txt" }));
 
 dns
   .createServer()
